@@ -3,7 +3,8 @@ set -e
 
 # Load environment variables from .env file
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    # Strip comments and export variables
+    export $(grep -v '^#' .env | sed 's/#.*$//' | sed '/^$/d' | xargs)
 fi
 
 # Default tag if not specified
