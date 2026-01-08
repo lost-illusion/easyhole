@@ -12,6 +12,12 @@ WG_EASY_TAG=${WG_EASY_TAG:-v15.1.0}
 
 echo "Building wg-easy from tag/commit: $WG_EASY_TAG"
 
+# Clone wg-easy repository if it doesn't exist
+if [ ! -d "wg-easy" ]; then
+    echo "Cloning wg-easy repository..."
+    git clone https://github.com/wg-easy/wg-easy.git
+fi
+
 # Navigate to the wg-easy directory
 cd wg-easy
 
