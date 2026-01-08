@@ -1,0 +1,59 @@
+# Data directories - ignore contents but keep structure
+dns-server/*
+!dns-server/.gitkeep
+
+etc-pihole/*
+!etc-pihole/.gitkeep
+
+etc-dnsmasq.d/*
+!etc-dnsmasq.d/.gitkeep
+
+config/*
+!config/.gitkeep
+
+# WireGuard Easy repository (cloned by build.sh)
+wg-easy/
+
+# Environment file (contains passwords)
+.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.backup

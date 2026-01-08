@@ -1,0 +1,93 @@
+services:
+  dns-server:
+    container_name: dns-server
+    hostname: dns-server
+    image: technitium/dns-server:latest
+    environment:
+      - DNS_SERVER_DOMAIN=dns-server
+      - DNS_SERVER_ADMIN_PASSWORD=${DNS_SERVER_ADMIN_PASSWORD}
+      - DNS_SERVER_WEB_SERVICE_LOCAL_ADDRESSES=10.2.0.200
+      - DNS_SERVER_RECURSION=UseSpecifiedNetworkACL
+      - DNS_SERVER_RECURSION_ALLOWED_NETWORKS=127.0.0.1, 192.168.1.0/24, 10.0.0.0/8
+      - DNS_SERVER_LOG_USING_LOCAL_TIME=true
+    volumes:
+      - ./dns-server:/etc/dns
+    restart: unless-stopped
+    sysctls:
+      - net.ipv4.ip_local_port_range=1024 65000
+    networks:
+      private_network:
+        ipv4_address: 10.2.0.200
+    env_file: .env
+
+  pihole:
+    depends_on:
+      - dns-server
+    container_name: pihole
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    hostname: pihole
+    environment:
+      - TZ=${TZ}
+      - WEBPASSWORD=${WEBPASSWORD}
+      - ServerIP=${ServerIP}
+      - DNS1=${DNS1}
+      - DNS2=${DNS2}
+    dns:
+      - 127.0.0.1
+      - ${PIHOLE_DNS}
+    volumes:
+      - ./etc-pihole:/etc/pihole/
+      - ./etc-dnsmasq.d:/etc/dnsmasq.d/
+    cap_add:
+      - NET_ADMIN
+    networks:
+      private_network:
+        ipv4_address: 10.2.0.100
+    env_file: .env
+
+  wg-easy:
+    depends_on:
+      - pihole
+      - dns-server
+    build:
+      context: ./wg-easy
+      dockerfile: Dockerfile
+    environment:
+      - WG_DEFAULT_DNS=10.2.0.100
+    #  Optional:
+    #  - PORT=51821
+    #  - HOST=0.0.0.0
+    #  - INSECURE=false
+    container_name: wg-easy
+    networks:
+      private_network:
+        ipv4_address: 10.2.0.3
+    volumes:
+      - ./config:/etc/wireguard
+      - /lib/modules:/lib/modules:ro
+    dns:
+      - 10.2.0.100  # Pi-hole
+      - 10.2.0.200  # DNS Server
+    ports:
+      - "${SERVERPORT}:51820/udp"
+      - "${WGUI_PORT}:51821/tcp"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+      # - NET_RAW # ⚠️ Uncomment if using Podman
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv6.conf.all.forwarding=1
+      - net.ipv6.conf.default.forwarding=1
+    env_file: .env
+
+networks:
+  private_network:
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.2.0.0/24

@@ -1,0 +1,2 @@
+# This directory will contain WireGuard configuration
+# It will be populated automatically when the container starts

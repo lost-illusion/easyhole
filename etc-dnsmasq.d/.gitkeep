@@ -1,0 +1,2 @@
+# This directory will contain dnsmasq configuration for Pi-hole
+# It will be populated automatically when the container starts
