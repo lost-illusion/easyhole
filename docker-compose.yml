@@ -59,6 +59,7 @@ services:
       - WG_ALLOWED_IPS=${WG_ALLOWED_IPS:-10.2.0.0/24}
       - WG_PERSISTENT_KEEPALIVE=${WG_PERSISTENT_KEEPALIVE:-0}
       - WG_MTU=${WG_MTU}
+      - EXPERIMENTAL_AWG=${EXPERIMENTAL_AWG:-false}
     #  Optional:
     #  - PORT=51821
     #  - HOST=0.0.0.0
