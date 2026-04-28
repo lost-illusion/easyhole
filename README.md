@@ -108,6 +108,36 @@ The `.env` file is split into runtime values (always honored) and **first-boot i
 >
 > Changes made through the web UI after first boot persist in the DB — they will **not** be overwritten by editing `INIT_*` later.
 
+### AmneziaWG host kernel module
+
+`EXPERIMENTAL_AWG=true` only does anything if the host kernel has the `amneziawg` module loaded — wg-easy auto-detects via `modinfo amneziawg` at startup. Install methods:
+
+- **`./install-awg.sh`** (recommended, included in this repo) — builds from upstream source via DKMS. Auto-runs as part of `./build.sh` and is safe to invoke repeatedly.
+- The official `ppa:amnezia/ppa` PPA — built for Ubuntu `focal`, updated irregularly, and as of early 2026 was missing recent fixes for kernel use-after-free / memory corruption in `jp_spec_setup`. Source build is the safer path on a long-running VPS.
+
+#### Behavior of `install-awg.sh`
+
+| Situation                                       | What happens                                                |
+| ----------------------------------------------- | ----------------------------------------------------------- |
+| Not Linux (e.g., macOS dev box)                 | Silent exit                                                 |
+| Not Debian/Ubuntu                               | One-line skip notice, exit 0                                |
+| LXC container or no `/lib/modules/$(uname -r)`  | Skip with explanation (kernel modules can't be loaded here) |
+| Module already loaded, ref matches `AWG_KERNEL_REF` | "OK: amneziawg already current ($SHA)"                  |
+| Module loaded but upstream `master` moved       | WARNING with the upgrade command                            |
+| Not running as root                             | Prints `sudo` instruction, exit 0                           |
+| Root + all gates pass                           | `apt-get install` deps, `git clone`, `make dkms-install`, `dkms add/build/install`, `modprobe`, persist via `/etc/modules-load.d/amneziawg.conf` |
+
+State file `/var/lib/easyhole/awg-installed-ref` records the SHA of the last successful install.
+
+#### Manual invocation
+
+```bash
+sudo ./install-awg.sh                              # first install
+sudo AWG_FORCE_REINSTALL=true ./install-awg.sh     # force rebuild (e.g., to pick up upstream master)
+```
+
+DKMS handles kernel upgrades automatically — when you boot a new kernel, the module is rebuilt against its headers.
+
 ### Why the variable rename (v15)
 
 Earlier versions of wg-easy honored env vars like `WG_HOST`, `WG_DEFAULT_DNS`, `WG_ALLOWED_IPS`, `WG_PERSISTENT_KEEPALIVE`, `WG_MTU` at runtime. **wg-easy v15 removed them.** All those settings now live in the SQLite DB and are seeded once via the `INIT_*` family. If you migrated from an older `.env`, the legacy `WG_*` keys were silently ignored.
@@ -128,6 +158,7 @@ If you later want a non-standard external port, change `SERVERPORT` in `.env` an
 - Git
 - Linux host with `NET_ADMIN` and `SYS_MODULE` capabilities (already configured in `docker-compose.yml`)
 - Podman users: uncomment the `NET_RAW` line in `docker-compose.yml`
+- For AmneziaWG support: a Debian/Ubuntu host where you can `sudo`. Kernel headers and `dkms` are installed automatically by `install-awg.sh`.
 
 ### Steps
 

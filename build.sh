@@ -12,6 +12,13 @@ WG_EASY_TAG=${WG_EASY_TAG:-v15.1.0}
 
 echo "Building wg-easy from tag/commit: $WG_EASY_TAG"
 
+# Best-effort: build/refresh the AmneziaWG kernel module on the host.
+# Skips silently when not on Debian/Ubuntu, when already current, or when
+# not running as root. See install-awg.sh for details.
+if [ -x ./install-awg.sh ]; then
+    ./install-awg.sh || echo "WARNING: install-awg.sh exited non-zero (continuing wg-easy build)"
+fi
+
 # Clone wg-easy repository if it doesn't exist
 if [ ! -d "wg-easy" ]; then
     echo "Cloning wg-easy repository..."
