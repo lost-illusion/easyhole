@@ -143,6 +143,8 @@ docker compose up -d
 docker compose ps            # all 3 services should be 'running'
 ```
 
+> **Always run `./build.sh` before `docker compose up -d`.** The script clones `wg-easy/` (which compose uses as a build context), runs `git fetch`, and warns if your pinned `WG_EASY_TAG` is behind the latest upstream stable release. Running `docker compose up -d --build` directly will fail on first install (no `wg-easy/` directory) and skips the upstream-version check.
+
 ### First connection
 
 1. SSH-tunnel to the admin UI: `ssh -L 51821:127.0.0.1:51821 user@your-host`

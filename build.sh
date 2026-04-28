@@ -23,7 +23,25 @@ cd wg-easy
 
 # Fetch latest changes
 echo "Fetching latest changes..."
-git fetch --all --tags
+git fetch --all --tags --prune
+
+# Compare pinned WG_EASY_TAG against the latest upstream stable release.
+# Stable = vX.Y.Z (no -beta, -rc, etc.). Latest is determined locally from
+# the tags we just fetched, so no GitHub API call is needed.
+LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+
+if [ -n "$LATEST_TAG" ]; then
+    if [ "$WG_EASY_TAG" = "$LATEST_TAG" ]; then
+        echo "OK: pinned to latest stable ($LATEST_TAG)."
+    elif echo "$WG_EASY_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo ""
+        echo "WARNING: pinned to $WG_EASY_TAG, but latest stable is $LATEST_TAG."
+        echo "         To upgrade: edit .env and set WG_EASY_TAG=$LATEST_TAG"
+        echo ""
+    else
+        echo "INFO: pinned to $WG_EASY_TAG (non-stable ref). Latest stable is $LATEST_TAG."
+    fi
+fi
 
 # Checkout the specified tag/commit
 echo "Checking out $WG_EASY_TAG..."
