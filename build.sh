@@ -1,10 +1,92 @@
 #!/bin/bash
 set -e
 
-# Load environment variables from .env file
-if [ -f .env ]; then
-    # Strip comments and export variables
-    export $(grep -v '^#' .env | sed 's/#.*$//' | sed '/^$/d' | xargs)
+# ── Pre-flight: ensure .env exists and INIT_HOST is set ────────────────
+
+prompt_yes_no() {
+    local prompt="$1"
+    local choice
+    if [ ! -t 0 ]; then return 0; fi
+    read -r -p "$prompt " choice
+    case "${choice:-Y}" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+if [ ! -f .env ]; then
+    if [ ! -f .env.example ]; then
+        echo "ERROR: neither .env nor .env.example found. Cannot continue."
+        exit 1
+    fi
+    echo ".env not found."
+    if prompt_yes_no "Create .env from .env.example? [Y/n]"; then
+        cp .env.example .env
+        echo "Created .env from .env.example. Review passwords before deploying."
+    else
+        echo "Aborted: .env is required."
+        exit 1
+    fi
+fi
+
+# Strip comments and export variables
+export $(grep -v '^#' .env | sed 's/#.*$//' | sed '/^$/d' | xargs)
+
+# wg-easy unattended setup is silently skipped when INIT_HOST is empty,
+# so guard against that here rather than letting users hit the wizard.
+if [ -z "${INIT_HOST:-}" ]; then
+    echo ""
+    echo "INIT_HOST is empty in .env (required by wg-easy unattended setup)."
+
+    if [ ! -t 0 ]; then
+        echo "ERROR: not running interactively. Edit .env and set INIT_HOST first."
+        exit 1
+    fi
+
+    DETECTED_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
+        || curl -s --max-time 5 https://ifconfig.me 2>/dev/null \
+        || curl -s --max-time 5 https://icanhazip.com 2>/dev/null \
+        || true)
+    DETECTED_IP=$(echo "$DETECTED_IP" | tr -d '[:space:]')
+
+    echo "Choose INIT_HOST:"
+    if [ -n "$DETECTED_IP" ]; then
+        echo "  1) Detected external IP: $DETECTED_IP"
+        echo "  2) Custom domain or IP"
+        DEFAULT_CHOICE=1
+    else
+        echo "  (external IP auto-detection failed)"
+        echo "  2) Custom domain or IP"
+        DEFAULT_CHOICE=2
+    fi
+    read -r -p "Choice [$DEFAULT_CHOICE]: " choice
+    choice="${choice:-$DEFAULT_CHOICE}"
+
+    NEW_HOST=""
+    case "$choice" in
+        1)
+            if [ -z "$DETECTED_IP" ]; then
+                echo "ERROR: external IP not available."
+                exit 1
+            fi
+            NEW_HOST="$DETECTED_IP"
+            ;;
+        2)
+            read -r -p "Enter domain or IP: " NEW_HOST
+            ;;
+        *)
+            echo "Unknown choice."
+            exit 1
+            ;;
+    esac
+
+    NEW_HOST=$(echo "$NEW_HOST" | tr -d '[:space:]')
+    if [ -z "$NEW_HOST" ]; then
+        echo "ERROR: INIT_HOST cannot be empty."
+        exit 1
+    fi
+
+    # Portable in-place rewrite (works on both BSD and GNU sed)
+    sed "s|^INIT_HOST=.*|INIT_HOST=$NEW_HOST|" .env > .env.tmp && mv .env.tmp .env
+    export INIT_HOST="$NEW_HOST"
+    echo "Set INIT_HOST=$NEW_HOST in .env."
 fi
 
 # Default tag if not specified
