@@ -54,16 +54,28 @@ services:
       context: ./wg-easy
       dockerfile: Dockerfile
     environment:
-      - WG_HOST=${WG_HOST}
-      - WG_DEFAULT_DNS=${WG_DEFAULT_DNS:-10.2.0.100}
-      - WG_ALLOWED_IPS=${WG_ALLOWED_IPS:-10.2.0.0/24}
-      - WG_PERSISTENT_KEEPALIVE=${WG_PERSISTENT_KEEPALIVE:-0}
-      - WG_MTU=${WG_MTU}
+      # Web UI listening port (inside container)
+      - PORT=${WGUI_PORT:-51821}
+      # Use plain HTTP for the UI; safe because the port is bound to 127.0.0.1
+      # and intended to be reached via SSH tunnel.
+      - INSECURE=true
+      # Enable AmneziaWG (auto-detects kernel module if available).
       - EXPERIMENTAL_AWG=${EXPERIMENTAL_AWG:-false}
-    #  Optional:
-    #  - PORT=51821
-    #  - HOST=0.0.0.0
-    #  - INSECURE=false
+
+      # ── First-boot setup (only applied when ./config DB is empty) ───────
+      # See: https://wg-easy.github.io/wg-easy/latest/advanced/config/unattended-setup/
+      - INIT_ENABLED=${INIT_ENABLED:-true}
+      - INIT_USERNAME=${INIT_USERNAME}
+      - INIT_PASSWORD=${INIT_PASSWORD}
+      - INIT_HOST=${INIT_HOST}
+      # NOTE: INIT_PORT sets BOTH the WireGuard listener (inside container)
+      # AND the Endpoint advertised in client configs. Keep it equal to
+      # SERVERPORT so the published port matches.
+      - INIT_PORT=${SERVERPORT:-51820}
+      - INIT_DNS=${INIT_DNS:-10.2.0.100}
+      - INIT_IPV4_CIDR=${INIT_IPV4_CIDR:-10.8.0.0/24}
+      - INIT_IPV6_CIDR=${INIT_IPV6_CIDR:-fdcc:ad94:bacf:61a4::cafe:0/112}
+      - INIT_ALLOWED_IPS=${INIT_ALLOWED_IPS:-10.2.0.0/24}
     container_name: wg-easy
     networks:
       private_network:
@@ -75,8 +87,11 @@ services:
       - 10.2.0.100  # Pi-hole
       - 10.2.0.200  # DNS Server
     ports:
-      - "${SERVERPORT}:51820/udp"
-      - "127.0.0.1:${WGUI_PORT}:51821/tcp"
+      # External and internal UDP port must match — INIT_PORT sets the
+      # in-container WireGuard listener.
+      - "${SERVERPORT}:${SERVERPORT}/udp"
+      # Admin UI bound to localhost; reach it via: ssh -L 51821:127.0.0.1:51821 user@host
+      - "127.0.0.1:${WGUI_PORT}:${WGUI_PORT}/tcp"
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

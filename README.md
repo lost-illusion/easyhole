@@ -1,423 +1,290 @@
-# EasyHole - WireGuard Easy + Pi-hole + DNS Server
+# EasyHole — WireGuard Easy + Pi-hole + Technitium DNS
 
-Complete VPN solution with ad-blocking and privacy-focused DNS. This setup combines:
-- **wg-easy**: Easy WireGuard VPN management with web UI
-- **Pi-hole**: Network-wide ad blocking
-- **Technitium DNS Server**: Privacy-focused recursive DNS resolver
+A self-hosted, all-in-one privacy stack:
 
-All built from [wg-easy](https://github.com/wg-easy/wg-easy) source with configurable version control.
+- **wg-easy** — WireGuard VPN with a web admin UI (built from source, version-pinned)
+- **Pi-hole** — network-wide ad blocking
+- **Technitium DNS Server** — recursive DNS resolution (no third-party upstreams)
 
-## Quick Start (TL;DR)
+Built from [wg-easy](https://github.com/wg-easy/wg-easy) source so you can pin to any tag/commit.
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Configure environment (optional - defaults work for testing)
+# 1. Configure
 cp .env.example .env
-nano .env  # Change passwords!
+nano .env                    # set INIT_HOST, INIT_PASSWORD, WEBPASSWORD, DNS_SERVER_ADMIN_PASSWORD
 
-# 2. Build wg-easy from source
+# 2. Build wg-easy
 ./build.sh
 
-# 3. Start all services
+# 3. Launch
 docker compose up -d
 
-# 4. Check status
-docker compose ps
+# 4. Reach the admin UI from your laptop (UI is bound to 127.0.0.1 on the host)
+ssh -L 51821:127.0.0.1:51821 user@your-host
+# then open http://localhost:51821
 ```
 
-**Access:**
-- **WireGuard UI**: http://localhost:51821
-- **Pi-hole**: http://10.2.0.100/admin (via VPN)
-- **DNS Server**: http://10.2.0.200:5380 (via VPN)
+> **Why the SSH tunnel?** Docker port publishing bypasses UFW. Binding the admin UI to `127.0.0.1` on the host keeps it off the public internet regardless of firewall state. The WireGuard UDP port (`SERVERPORT`) is intentionally public.
 
-## Features
-
-- 🔒 **Secure VPN** - WireGuard with easy peer management
-- 🚫 **Ad Blocking** - Network-wide via Pi-hole
-- 🔐 **Privacy DNS** - Recursive DNS resolution (no upstream providers)
-- 🏗️ **Version Control** - Build wg-easy from any tag/commit
-- 💾 **Persistent Data** - Local directories for easy backup
-- 🐳 **Docker Compose** - Simple orchestration
-- 📝 **Well Documented** - Complete setup guide
+---
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
-│  VPN Client (Your Device)                   │
+│  VPN Client (your device)                   │
 │  DNS: 10.2.0.100                            │
 └──────────────────┬──────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────┐
-│  WireGuard (wg-easy)                        │
-│  IP: 10.2.0.3                               │
-│  Ports: 51820/udp, 51821/tcp                │
+│  WireGuard (wg-easy)         10.2.0.3       │
+│  Public UDP: ${SERVERPORT}                  │
+│  Admin UI:   127.0.0.1:${WGUI_PORT}         │
 └──────────────────┬──────────────────────────┘
-                   │ DNS Queries
+                   │ DNS queries
                    ▼
 ┌─────────────────────────────────────────────┐
-│  Pi-hole (Ad Blocking)                      │
-│  IP: 10.2.0.100                             │
-│  Web: http://10.2.0.100/admin               │
+│  Pi-hole (ad blocker)        10.2.0.100     │
 └──────────────────┬──────────────────────────┘
                    │ Non-blocked queries
                    ▼
 ┌─────────────────────────────────────────────┐
-│  DNS Server (Recursive Resolution)          │
-│  IP: 10.2.0.200                             │
-│  Web: http://10.2.0.200:5380                │
+│  Technitium DNS (recursive)  10.2.0.200     │
 └──────────────────┬──────────────────────────┘
-                   │
                    ▼
-              Internet (Root DNS)
+              Internet (root DNS)
 ```
 
-**DNS Flow:**
-1. VPN clients use Pi-hole (10.2.0.100) as primary DNS
-2. Pi-hole blocks ads and forwards to DNS Server (10.2.0.200)
-3. DNS Server performs recursive DNS resolution for privacy
+All services share a private Docker bridge `10.2.0.0/24`. WireGuard peers live on `10.8.0.0/24` (configurable via `INIT_IPV4_CIDR`).
 
-**Network:** All services run on the `10.2.0.0/24` private network
+---
 
-## Repository Structure
+## Repository Layout
 
 ```
 easyhole/
-├── docker-compose.yml      # Service orchestration
-├── .env                    # Your configuration (create from .env.example)
-├── .env.example            # Configuration template
-├── build.sh                # Build script for wg-easy
-├── README.md               # This file
-├── .gitignore              # Git exclusions
-├── wg-easy/                # Cloned by build.sh (auto-created)
-└── Data directories (auto-created on first run):
-    ├── dns-server/         # Technitium DNS Server data
-    ├── etc-pihole/         # Pi-hole configuration
-    ├── etc-dnsmasq.d/      # dnsmasq configuration
-    └── config/             # WireGuard keys and configs
+├── docker-compose.yml      # Service definitions
+├── .env / .env.example     # Configuration
+├── build.sh                # Clones + builds wg-easy from a pinned tag
+├── wg-easy/                # Cloned by build.sh on first run
+└── (created at runtime)
+    ├── dns-server/         # Technitium data
+    ├── etc-pihole/         # Pi-hole settings + blocklists
+    ├── etc-dnsmasq.d/      # dnsmasq configs
+    └── config/             # wg-easy SQLite DB + WireGuard keys
 ```
+
+---
+
+## Configuration
+
+### Critical environment variables
+
+The `.env` file is split into runtime values (always honored) and **first-boot init** values (applied only when `./config/` is empty).
+
+| Variable                | What it controls                                                 | Type        |
+| ----------------------- | ---------------------------------------------------------------- | ----------- |
+| `WG_EASY_TAG`           | wg-easy git tag/commit to build                                  | runtime     |
+| `SERVERPORT`            | Public UDP port for WireGuard (host **and** in-container listen) | runtime     |
+| `WGUI_PORT`             | Admin web UI port (bound to `127.0.0.1` on host)                 | runtime     |
+| `EXPERIMENTAL_AWG`      | Enable AmneziaWG support (auto-detects kernel module)            | runtime     |
+| `INIT_ENABLED`          | Run unattended setup on first boot                               | first-boot  |
+| `INIT_USERNAME`         | Admin username                                                   | first-boot  |
+| `INIT_PASSWORD`         | Admin password — **change before first boot**                    | first-boot  |
+| `INIT_HOST`             | Public hostname/IP for client `Endpoint =` line                  | first-boot  |
+| `INIT_DNS`              | DNS handed to VPN clients (default: Pi-hole `10.2.0.100`)        | first-boot  |
+| `INIT_ALLOWED_IPS`      | Client `AllowedIPs` (`10.2.0.0/24` split / `0.0.0.0/0,::/0` full)| first-boot  |
+| `INIT_IPV4_CIDR`        | WireGuard peer subnet (default `10.8.0.0/24`)                    | first-boot  |
+| `INIT_IPV6_CIDR`        | WireGuard peer IPv6 subnet                                       | first-boot  |
+| `WEBPASSWORD`           | Pi-hole admin password — **change**                              | runtime     |
+| `DNS_SERVER_ADMIN_PASSWORD` | Technitium admin password — **change**                       | runtime     |
+
+> **First-boot init only fires once.** wg-easy stores its config in a SQLite DB under `./config/`. Once that DB exists, all `INIT_*` variables are ignored. To re-seed you must delete `./config/*` (which destroys all clients/keys).
+>
+> Changes made through the web UI after first boot persist in the DB — they will **not** be overwritten by editing `INIT_*` later.
+
+### Why the variable rename (v15)
+
+Earlier versions of wg-easy honored env vars like `WG_HOST`, `WG_DEFAULT_DNS`, `WG_ALLOWED_IPS`, `WG_PERSISTENT_KEEPALIVE`, `WG_MTU` at runtime. **wg-easy v15 removed them.** All those settings now live in the SQLite DB and are seeded once via the `INIT_*` family. If you migrated from an older `.env`, the legacy `WG_*` keys were silently ignored.
+
+### Port behavior (important)
+
+`INIT_PORT` sets **both** the in-container WireGuard listener AND the `Endpoint = host:PORT` line in generated client configs. They cannot be different via env vars. We pin `INIT_PORT=${SERVERPORT}` and use a Docker mapping of `${SERVERPORT}:${SERVERPORT}/udp` so the external port matches the listener and matches what clients dial.
+
+If you later want a non-standard external port, change `SERVERPORT` in `.env` and re-create the container — the new port will propagate via the existing mapping (the DB-stored interface port still needs to be updated via the UI if the DB has already been seeded).
+
+---
 
 ## Installation
 
 ### Prerequisites
 
-- Docker and Docker Compose
+- Docker + Docker Compose
 - Git
-- NET_ADMIN and SYS_MODULE capabilities (configured in docker-compose.yml)
-- If using Podman, uncomment the NET_RAW capability in docker-compose.yml
+- Linux host with `NET_ADMIN` and `SYS_MODULE` capabilities (already configured in `docker-compose.yml`)
+- Podman users: uncomment the `NET_RAW` line in `docker-compose.yml`
 
-### Setup Steps
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/lost-illusion/easyhole.git
-   cd easyhole
-   ```
-
-2. **Configure environment**
-
-   ```bash
-   cp .env.example .env
-   nano .env
-   ```
-
-   **IMPORTANT**: Change default passwords!
-   ```bash
-   WEBPASSWORD=your_secure_password          # Pi-hole admin
-   DNS_SERVER_ADMIN_PASSWORD=your_password   # DNS Server admin
-   ```
-
-3. **Optional: Choose wg-easy version**
-
-   Edit `.env` to change the version:
-   ```bash
-   WG_EASY_TAG=v15.1.0  # Or any tag/commit/branch
-   ```
-
-4. **Build wg-easy**
-
-   ```bash
-   ./build.sh
-   ```
-
-   This script will:
-   - Clone wg-easy repository (if not exists)
-   - Fetch latest tags
-   - Checkout specified version
-   - Build Docker image
-
-5. **Start services**
-
-   ```bash
-   docker compose up -d
-   ```
-
-6. **Verify all services are running**
-
-   ```bash
-   docker compose ps
-   ```
-
-   You should see 3 services running: dns-server, pihole, wg-easy
-
-## Configuration
-
-### Network Architecture
-
-All services run on the `10.2.0.0/24` private network:
-- **dns-server**: 10.2.0.200 (Technitium DNS Server)
-- **pihole**: 10.2.0.100 (Pi-hole)
-- **wg-easy**: 10.2.0.3 (WireGuard VPN)
-
-VPN clients are configured to use Pi-hole (10.2.0.100) as their DNS server automatically.
-
-### Environment Variables (.env)
+### Steps
 
 ```bash
-# WireGuard Easy version to build
-WG_EASY_TAG=v15.1.0          # Git tag/commit to build from
+git clone https://github.com/lost-illusion/easyhole.git
+cd easyhole
 
-# WireGuard settings
-SERVERPORT=51820              # VPN port (UDP)
-WGUI_PORT=51821               # Web UI port (TCP)
-TZ=UTC                        # Timezone
+cp .env.example .env
+$EDITOR .env                 # set INIT_HOST, all *PASSWORD* fields
 
-# Pi-hole settings
-WEBPASSWORD=admin             # Change this!
-PIHOLE_DNS=10.2.0.200         # DNS Server IP
-ServerIP=10.2.0.100           # Pi-hole IP
-DNS1=10.2.0.200               # Primary upstream DNS
-DNS2=10.2.0.200               # Secondary upstream DNS
-
-# DNS Server settings
-DNS_SERVER_ADMIN_PASSWORD=admin  # Change this!
+./build.sh                   # clones + builds wg-easy from $WG_EASY_TAG
+docker compose up -d
+docker compose ps            # all 3 services should be 'running'
 ```
 
-**IMPORTANT**: Change the default passwords before deployment!
+### First connection
 
-### Additional wg-easy Configuration
+1. SSH-tunnel to the admin UI: `ssh -L 51821:127.0.0.1:51821 user@your-host`
+2. Open <http://localhost:51821>, log in with `INIT_USERNAME` / `INIT_PASSWORD`
+3. Create a client → download `.conf` or scan QR code
+4. Import into the WireGuard app and connect
 
-Edit the `environment` section in `docker-compose.yml` for advanced options:
+---
 
-```yaml
-environment:
-  - WG_DEFAULT_DNS=10.2.0.100
-  - PORT=51821
-  - HOST=0.0.0.0
-  - INSECURE=false
-```
+## Network Exposure
 
-See the [wg-easy documentation](https://github.com/wg-easy/wg-easy) for all available options.
+| Port            | Bound to host  | Purpose                                | Required from internet? |
+| --------------- | -------------- | -------------------------------------- | ----------------------- |
+| `SERVERPORT/udp`| `0.0.0.0`      | WireGuard data plane                   | Yes                     |
+| `WGUI_PORT/tcp` | `127.0.0.1`    | wg-easy admin web UI                   | **No** (SSH tunnel)     |
+| Pi-hole         | (none)         | Reachable only via VPN at `10.2.0.100` | No                      |
+| Technitium      | (none)         | Reachable only via VPN at `10.2.0.200` | No                      |
 
-## Usage
+> **UFW caveat:** Docker writes its own iptables rules into the `DOCKER` chain, which is evaluated before UFW's user chains. UFW rules do **not** apply to `0.0.0.0`-published Docker ports. We avoid the foot-gun by binding the admin UI to `127.0.0.1` and only publishing the WireGuard UDP port (which you want public anyway).
 
-### Setting Up VPN Clients
+---
 
-1. **Access WireGuard UI**
+## Services Reachable Over the VPN
 
-   Open http://localhost:51821 in your browser
+Once connected:
 
-2. **Create a client/peer**
+- Pi-hole admin: <http://10.2.0.100/admin>
+- Technitium console: <http://10.2.0.200:5380>
+- wg-easy UI (alternative to SSH tunnel): <http://10.2.0.3:51821>
 
-   Click "New Client" and give it a name
+---
 
-3. **Download configuration**
-
-   - Download the `.conf` file, or
-   - Scan the QR code with WireGuard mobile app
-
-4. **Connect**
-
-   Import the configuration into your WireGuard client and connect
-
-**DNS is automatically configured** - clients will use Pi-hole (10.2.0.100) for ad-blocking
-
-### Accessing Services via VPN
-
-Once connected to the VPN:
-
-- **Pi-hole Admin**: http://10.2.0.100/admin
-- **DNS Server Console**: http://10.2.0.200:5380
-- **WireGuard UI**: http://10.2.0.3:51821
-
-**Benefits:**
-- All DNS queries go through Pi-hole (automatic ad-blocking)
-- View blocked domains and statistics in Pi-hole dashboard
-- Configure DNS settings in DNS Server console
-
-### Common Commands
+## Common Commands
 
 ```bash
-# View logs from all services
+# Logs
 docker compose logs -f
-
-# View specific service logs
 docker compose logs -f wg-easy
-docker compose logs -f pihole
-docker compose logs -f dns-server
 
-# Restart services
+# Restart
 docker compose restart
-
-# Restart specific service
 docker compose restart pihole
 
-# Stop all services
+# Stop
 docker compose down
 
-# Stop and remove all data (CAUTION!)
+# Stop and wipe volumes (DESTROYS clients/keys/Pi-hole data)
 docker compose down -v
 
-# Update to different wg-easy version
-# 1. Edit .env and change WG_EASY_TAG
-# 2. Rebuild
+# Update wg-easy version
+nano .env                    # change WG_EASY_TAG=...
 ./build.sh
-# 3. Recreate containers
 docker compose up -d --force-recreate wg-easy
+
+# Re-seed wg-easy from INIT_* (DESTROYS existing clients)
+docker compose down
+rm -rf ./config/*            # ⚠️ destroys SQLite DB and WireGuard keys
+docker compose up -d
 ```
 
-## Changing Versions
+---
 
-To build a different version of wg-easy:
+## DNS Flow
 
-1. Update the `WG_EASY_TAG` in `.env`
-   ```bash
-   WG_EASY_TAG=v15.2.0  # or any tag/commit
-   ```
+1. VPN client → Pi-hole (`10.2.0.100`) — ad/tracker blocking
+2. Pi-hole → Technitium (`10.2.0.200`) — non-blocked queries
+3. Technitium → root DNS — recursive resolution, no third-party
 
-2. Run build script
-   ```bash
-   ./build.sh
-   ```
+To use Cloudflare/Google upstreams instead of recursion: open the Technitium console (Settings → Forwarders) and add `1.1.1.1`, `8.8.8.8`, etc.
 
-3. Restart the container
-   ```bash
-   docker compose up -d
-   ```
-
-You can use:
-- **Release tags**: `v15.1.0`, `v15.0.0-beta.13`, etc.
-- **Commit hashes**: `abc1234`
-- **Branch names**: `main`, `develop`, etc.
-
-## Ports
-
-- `51820/udp` - WireGuard VPN port (configurable via SERVERPORT)
-- `51821/tcp` - WireGuard Web UI (configurable via WGUI_PORT)
-
-**Note**: Pi-hole and DNS Server web interfaces are only accessible via VPN on their internal IPs (no external ports exposed).
-
-## DNS Configuration Details
-
-### Default Setup (Privacy-Focused)
-
-- **VPN clients** use Pi-hole (10.2.0.100) as primary DNS
-- **Pi-hole** forwards to DNS Server (10.2.0.200) for recursive resolution
-- **DNS Server** performs recursive DNS queries directly to root servers
-- This provides **maximum privacy** - no DNS queries go to third-party providers
-
-### Using Upstream DNS Providers (Optional)
-
-If you prefer to use Cloudflare, Google, or other DNS providers:
-
-1. Connect to VPN
-2. Access DNS Server console at http://10.2.0.200:5380
-3. Go to Settings → Forwarders
-4. Add your preferred DNS servers (e.g., 1.1.1.1, 8.8.8.8)
-
-### Testing DNS Resolution
+### Quick test
 
 ```bash
-# Test DNS resolution (from VPN client)
-nslookup google.com 10.2.0.100
-
-# Test ad blocking (should be blocked)
-nslookup ads.google.com 10.2.0.100
-
-# Verify you're routing through VPN
-curl ifconfig.me
+nslookup google.com 10.2.0.100         # should resolve
+nslookup ads.google.com 10.2.0.100     # should be blocked (0.0.0.0)
+curl ifconfig.me                       # should return your VPN host's IP
 ```
+
+---
 
 ## Data Persistence
 
-All service data is stored in local directories:
-- **dns-server/** - DNS Server configuration and zones
-- **etc-pihole/** - Pi-hole settings, blocklists, and statistics
-- **etc-dnsmasq.d/** - Custom dnsmasq configurations
-- **config/** - WireGuard keys and peer configurations
+All state is on the host filesystem under the project directory:
 
-These directories are automatically created and populated on first run. They are excluded from git via `.gitignore` to protect sensitive data.
+- `dns-server/` — Technitium config + zones
+- `etc-pihole/`, `etc-dnsmasq.d/` — Pi-hole settings, blocklists, stats
+- `config/` — wg-easy SQLite DB + WireGuard keys
 
-**Backup**: Simply backup these directories to preserve your configuration and data.
+Backup = copy these directories. Restore = put them back and `docker compose up -d`. They are gitignored.
 
-**Restore**: Copy the directories back and run `docker compose up -d`
+---
 
 ## Troubleshooting
 
 ### Services won't start
 
 ```bash
-# Check if WireGuard ports are already in use
-sudo lsof -i :51820
-sudo lsof -i :51821
-
-# Note: Pi-hole and DNS Server have no exposed ports (only accessible via VPN)
-
-# Check container status
+sudo lsof -i :${SERVERPORT}
+sudo lsof -i :${WGUI_PORT}
 docker compose ps
-
-# View error logs
 docker compose logs
 ```
 
-### DNS not working
+### Generated client configs have the wrong port
 
-- Verify all containers are running: `docker compose ps`
-- Check Pi-hole is using correct upstream: `docker logs pihole`
-- Verify DNS Server is accessible: `docker logs dns-server`
-- Test DNS directly:
-  ```bash
-  docker exec pihole dig google.com @127.0.0.1
-  docker exec dns-server dig google.com @127.0.0.1
-  ```
+If `Endpoint = host:51820` appears even though you set `SERVERPORT=51999`, the SQLite DB was seeded before you changed `SERVERPORT`. Either:
 
-### Can't access web interfaces
+- change the port in the wg-easy UI (Interface settings), **or**
+- wipe `./config/*` and let `INIT_*` re-seed (destroys clients)
 
-- **WireGuard UI**: Check if ports ${SERVERPORT} and ${WGUI_PORT} are available
-- **Pi-hole/DNS Server**: Must be accessed via VPN (no external ports exposed)
-- Check firewall rules on host machine
-- Verify containers are on correct network: `docker network inspect easyhole_private_network`
+### `INIT_*` changes seem to do nothing
+
+`INIT_*` only fires when the wg-easy DB is empty. After the first boot, change settings in the web UI. To force re-seed: stop the stack, delete `./config/*`, restart.
+
+### Admin UI not reachable
+
+The UI is bound to `127.0.0.1` on the host. From outside, use SSH port-forwarding or change the bind in `docker-compose.yml` (e.g. to a LAN IP). Do **not** bind to `0.0.0.0` unless you've put TLS + auth in front of it.
 
 ### Pi-hole shows no queries
 
-- Verify WireGuard clients are configured with correct DNS (10.2.0.100)
-- Check client is actually routing through VPN: `curl ifconfig.me`
-- Verify VPN is connected and active
+- Confirm the client is actually using the VPN (`curl ifconfig.me`)
+- Confirm DNS is `10.2.0.100` in the client's tunnel config
+- Check `docker logs pihole`
 
-### Can't access Pi-hole admin
+### Building wg-easy fails
 
-- Make sure you're connected to the VPN first
-- Pi-hole's internal IP (10.2.0.100) is only accessible via VPN
-- There is no external port mapping for Pi-hole by default
+`build.sh` clones `https://github.com/wg-easy/wg-easy` if the `wg-easy/` directory is missing, then checks out `WG_EASY_TAG`. If the build fails, check that the tag exists upstream and that Docker has enough memory.
+
+---
 
 ## Notes
 
-- Uses original wg-easy Dockerfile with buildable version control
-- Pi-hole and DNS Server use official Docker images
-- All services configured for automatic restart
-- IPv6 enabled by default on WireGuard
-- DNS Server allows recursion for private networks (10.0.0.0/8, 192.168.1.0/24)
-- All configuration data stored in local directories for easy backup
-- Sensitive data (.env, configs, keys) excluded from git
+- IPv6 enabled in the WireGuard interface by default
+- Technitium recursion is allowed only from `127.0.0.1`, `192.168.1.0/24`, and `10.0.0.0/8` — adjust in `docker-compose.yml` if your LAN differs
+- `INSECURE=true` is set on wg-easy because the UI is bound to `127.0.0.1`; if you expose it publicly, set `INSECURE=false` and front it with TLS
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
+---
 
 ## License
 
-This project configuration is provided as-is. Individual components maintain their own licenses:
+Project glue is provided as-is. Component licenses:
+
 - [wg-easy](https://github.com/wg-easy/wg-easy)
 - [Pi-hole](https://github.com/pi-hole/pi-hole)
 - [Technitium DNS Server](https://github.com/TechnitiumSoftware/DnsServer)
