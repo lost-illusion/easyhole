@@ -76,7 +76,7 @@ services:
       - 10.2.0.200  # DNS Server
     ports:
       - "${SERVERPORT}:51820/udp"
-      - "${WGUI_PORT}:51821/tcp"
+      - "127.0.0.1:${WGUI_PORT}:51821/tcp"
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
