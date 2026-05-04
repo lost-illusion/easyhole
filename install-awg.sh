@@ -122,16 +122,26 @@ dkms install -m "$DKMS_NAME" -v "$DKMS_VER"
 log "loading module"
 modprobe amneziawg
 
+# Verify module is registered with the kernel
+if ! modinfo amneziawg >/dev/null 2>&1; then
+    log "ERROR: install completed but modinfo amneziawg fails"
+    exit 1
+fi
+
+# Verify module is functional: kernel must accept creating an amneziawg-type
+# interface via netlink. This is what `awg-quick` ultimately relies on.
+TEST_IFACE="awg-check-$$"
+log "verifying module is functional (test iface $TEST_IFACE)"
+if ! ip link add dev "$TEST_IFACE" type amneziawg 2>/dev/null; then
+    log "ERROR: kernel rejected 'ip link add type amneziawg' — module loaded but not usable"
+    exit 1
+fi
+ip link delete "$TEST_IFACE" 2>/dev/null || log "WARNING: could not delete test iface $TEST_IFACE"
+
 log "persisting module load at boot ($PERSIST_FILE)"
 echo amneziawg > "$PERSIST_FILE"
 
 mkdir -p "$STATE_DIR"
 echo "$RESOLVED_SHA" > "$STATE_FILE"
-
-# Final verification
-if ! modinfo amneziawg >/dev/null 2>&1; then
-    log "ERROR: install completed but modinfo amneziawg fails"
-    exit 1
-fi
 
 log "OK: amneziawg installed ($SHORT_RESOLVED)"
