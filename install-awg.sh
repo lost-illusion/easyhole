@@ -117,7 +117,10 @@ dkms add -m "$DKMS_NAME" -v "$DKMS_VER" 2>/dev/null || true
 log "building DKMS module"
 dkms build -m "$DKMS_NAME" -v "$DKMS_VER"
 log "installing DKMS module"
-dkms install -m "$DKMS_NAME" -v "$DKMS_VER"
+# --no-initrd: amneziawg is a runtime networking module, not needed in initramfs.
+# Skipping the rebuild also avoids hard-failing the install when the host's
+# update-initramfs/mkinitrd is broken for unrelated reasons.
+dkms install --no-initrd -m "$DKMS_NAME" -v "$DKMS_VER"
 
 log "loading module"
 modprobe amneziawg
