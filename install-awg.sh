@@ -133,10 +133,13 @@ fi
 
 # Verify module is functional: kernel must accept creating an amneziawg-type
 # interface via netlink. This is what `awg-quick` ultimately relies on.
-TEST_IFACE="awg-check-$$"
+# Interface names are capped at 15 chars (IFNAMSIZ-1), so use a short fixed
+# name; pre-delete handles a stale iface left by an earlier crashed run.
+TEST_IFACE="awg-check"
+ip link delete "$TEST_IFACE" 2>/dev/null || true
 log "verifying module is functional (test iface $TEST_IFACE)"
-if ! ip link add dev "$TEST_IFACE" type amneziawg 2>/dev/null; then
-    log "ERROR: kernel rejected 'ip link add type amneziawg' — module loaded but not usable"
+if ! ip link add dev "$TEST_IFACE" type amneziawg; then
+    log "ERROR: 'ip link add type amneziawg' failed — module loaded but not usable"
     exit 1
 fi
 ip link delete "$TEST_IFACE" 2>/dev/null || log "WARNING: could not delete test iface $TEST_IFACE"
