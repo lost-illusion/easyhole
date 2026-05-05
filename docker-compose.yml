@@ -29,10 +29,14 @@ services:
     hostname: pihole
     environment:
       - TZ=${TZ}
-      - WEBPASSWORD=${WEBPASSWORD}
-      - ServerIP=${ServerIP}
-      - DNS1=${DNS1}
-      - DNS2=${DNS2}
+      # v6 renamed nearly all env vars to FTLCONF_* equivalents.
+      # Migration guide: https://docs.pi-hole.net/docker/upgrading/v5-v6/
+      - FTLCONF_webserver_api_password=${WEBPASSWORD}
+      # Upstream resolver (Technitium at 10.2.0.200). Multiple upstreams
+      # are separated by ";" e.g. "1.1.1.1;9.9.9.9".
+      - FTLCONF_dns_upstreams=${PIHOLE_DNS}
+      # Honor custom files mounted into /etc/dnsmasq.d (opt-in in v6).
+      - FTLCONF_misc_etc_dnsmasq_d=true
     dns:
       - 127.0.0.1
       - ${PIHOLE_DNS}
