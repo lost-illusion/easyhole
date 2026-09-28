@@ -90,7 +90,7 @@ if [ -z "${INIT_HOST:-}" ]; then
 fi
 
 # Default tag if not specified
-WG_EASY_TAG=${WG_EASY_TAG:-v15.1.0}
+WG_EASY_TAG=${WG_EASY_TAG:-5f2009a955eb95c62c89f8797ce8b24cad4a0820}
 
 echo "Building wg-easy from tag/commit: $WG_EASY_TAG"
 

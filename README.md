@@ -110,7 +110,11 @@ The `.env` file is split into runtime values (always honored) and **first-boot i
 
 ### AmneziaWG host kernel module
 
-`EXPERIMENTAL_AWG=true` only does anything if the host kernel has the `amneziawg` module loaded — wg-easy auto-detects via `modinfo amneziawg` at startup. Install methods:
+`EXPERIMENTAL_AWG=true` only does anything if the host kernel has the `amneziawg` module loaded — wg-easy auto-detects via `modinfo amneziawg` at startup.
+
+The default `WG_EASY_TAG` is an upstream master commit because AmneziaWG 3.1 (`HeaderProtectionKey`, `ContentPaddingAddition`, `RandomTrailers`, `DisableCookies`, timing ranges) is not in a wg-easy release yet. wg-easy v15.1.0 and older ship no AmneziaWG tools, so `EXPERIMENTAL_AWG` has no effect there. The 3.x parameters are optional: leave them unset to keep AmneziaWG 2.x clients working.
+
+Install methods:
 
 - **`./install-awg.sh`** (recommended, included in this repo) — builds from upstream source via DKMS. Auto-runs as part of `./build.sh` and is safe to invoke repeatedly.
 - The official `ppa:amnezia/ppa` PPA — built for Ubuntu `focal`, updated irregularly, and as of early 2026 was missing recent fixes for kernel use-after-free / memory corruption in `jp_spec_setup`. Source build is the safer path on a long-running VPS.
