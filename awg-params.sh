@@ -112,11 +112,13 @@ def gen_2x():
     rnd.shuffle(hs)
     p.update(h1=hs[0], h2=hs[1], h3=hs[2], h4=hs[3])
 
-    # I1: QUIC v1 Initial look-alike (1208 bytes); I2-I5: short-header style junk
-    # using the timestamp, counter, random-char and random-digit tags.
+    # I1: QUIC v1 Initial look-alike (1208 bytes); I2-I5: short-header style junk.
+    # Only tags both the kernel module and amneziawg-go (used by the phone/desktop
+    # apps) parse: b, t, r, rc, rd. The kernel-only <c> counter tag makes every
+    # amneziawg-go client fail with "unknown tag <c>".
     p["i1"] = "<b 0xc30000000108><r 8><b 0x08><r 8><b 0x00449e><r 1182>"
     p["i2"] = f"<b 0x4{rnd.randint(0, 15):x}><r 8><t><r {rnd.randint(40, 80)}>"
-    p["i3"] = f"<b 0x4{rnd.randint(0, 15):x}><r 8><c><r {rnd.randint(80, 140)}>"
+    p["i3"] = f"<b 0x4{rnd.randint(0, 15):x}><r 8><rd {rnd.randint(4, 8)}><t><r {rnd.randint(80, 140)}>"
     p["i4"] = f"<b 0x4{rnd.randint(0, 15):x}><r 8><rc {rnd.randint(16, 32)}><r {rnd.randint(24, 64)}>"
     p["i5"] = f"<b 0x4{rnd.randint(0, 15):x}><r 8><rd {rnd.randint(8, 24)}><r {rnd.randint(32, 96)}>"
     return p
