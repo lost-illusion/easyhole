@@ -168,7 +168,7 @@ sudo ./awg-params.sh --awg3 --force  # re-roll everything; every client must re-
 sudo ./awg-params.sh --remove-client-defaults  # drop the new-client workaround (see below)
 ```
 
-The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface, the new-client defaults and all existing clients, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path.
+The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface, the new-client defaults and all existing clients, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path, and S1–S4 are all ≥ 12 because the 3.x HeaderProtectionKey needs that (the kernel module rejects wg0 otherwise).
 
 `--awg3` fills every AmneziaWG 3.x option:
 

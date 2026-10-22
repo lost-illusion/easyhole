@@ -133,6 +133,9 @@ def sync_clients():
     return db.execute(f"UPDATE clients_table SET {sets}", values).rowcount
 
 
+HP_MIN_S = 12  # header protection nonce size: S1-S4 must each be at least this
+
+
 def span(lo_min, lo_max, width_min, width_max):
     lo = rnd.randint(lo_min, lo_max)
     return f"{lo}-{lo + rnd.randint(width_min, width_max)}"
@@ -146,8 +149,9 @@ def gen_2x():
 
     # Padded message sizes must all differ: init 148+S1, resp 92+S2, cookie 64+S3, data 32+S4.
     # S4 pads every data packet; keep it <=16 so a 1420 MTU + overhead stays under 1500.
+    # 3.x HeaderProtectionKey needs every S >= 12 (the kernel rejects wg0 with EINVAL).
     while True:
-        s = [rnd.randint(15, 150) for _ in range(3)] + [rnd.randint(4, 16)]
+        s = [rnd.randint(15, 150) for _ in range(3)] + [rnd.randint(HP_MIN_S, 16)]
         if len({148 + s[0], 92 + s[1], 64 + s[2], 32 + s[3]}) == 4:
             break
     p.update(s1=s[0], s2=s[1], s3=s[2], s4=s[3])
@@ -228,6 +232,11 @@ do_2x = force or (row[0] is None and row[1] is None)
 do_3x = awg3 and (force or row[2] is None)
 if not do_2x and not do_3x:
     sys.exit("Parameters already filled. Use --force to re-roll (existing clients must re-download configs).")
+if do_3x and not do_2x:
+    s = db.execute("SELECT s1, s2, s3, s4 FROM interfaces_table WHERE name='wg0'").fetchone()
+    if any(v is not None and v < HP_MIN_S for v in s):
+        sys.exit(f"ERROR: S1-S4 = {s}, but HeaderProtectionKey needs each >= {HP_MIN_S}.\n"
+                 "       Re-roll with: sudo ./awg-params.sh --awg3 --force (clients must re-download configs)")
 
 p = {}
 if do_2x:
@@ -254,7 +263,14 @@ PY
 trap - EXIT
 echo "Starting wg-easy..."
 docker compose start wg-easy
-sleep 5
+for i in $(seq 15); do
+    docker compose exec wg-easy awg show wg0 >/dev/null 2>&1 && break
+    if [ "$i" -eq 15 ]; then
+        echo "ERROR: wg0 did not come up. Check: docker compose logs wg-easy | grep -A3 awg-quick"
+        exit 1
+    fi
+    sleep 2
+done
 docker compose exec wg-easy awg show wg0 | grep -vE 'key:'
 
 # The PostUp hook creates the trigger when wg0 comes up; confirm it did.
