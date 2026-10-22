@@ -160,12 +160,27 @@ DKMS rebuilds the module for kernels installed *after* it. Kernels that were alr
 On first boot wg-easy only randomizes H1–H4, as single values. Jc/Jmin/Jmax and S1/S2 stay at upstream defaults, and S3/S4, I1–I5 and the H ranges are left empty. Run once after the first `docker compose up -d`, before creating clients:
 
 ```bash
-sudo ./awg-params.sh            # AmneziaWG 2.x: Jc/Jmin/Jmax, S1–S4, H1–H4 ranges, I1–I5
-sudo ./awg-params.sh --awg3     # also HeaderProtectionKey (AmneziaWG 3.x clients only)
-sudo ./awg-params.sh --force    # re-roll; every existing client must re-download its config
+sudo ./awg-params.sh                 # AmneziaWG 2.x: Jc/Jmin/Jmax, S1–S4, H1–H4 ranges, I1–I5
+sudo ./awg-params.sh --awg3          # + all 3.x options (3.x clients only); keeps existing 2.x values
+sudo ./awg-params.sh --sync-clients  # after adding clients: give them the server's per-client values
+sudo ./awg-params.sh --awg3 --force  # re-roll everything; every client must re-download its config
 ```
 
-The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface and the new-client defaults, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path. The other AmneziaWG 3.x options (ContentPaddingAddition, RandomTrailers, DisableCookies, timing ranges) stay unset; set them in the UI if you need them.
+The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface, the new-client defaults and all existing clients, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path.
+
+`--awg3` fills every AmneziaWG 3.x option:
+
+| Option | Value | Why |
+| --- | --- | --- |
+| `HeaderProtectionKey` | random 32-byte key | Encrypts the obfuscated header fields (must match on both ends) |
+| `RandomTrailers` | `on` | Random-length trailers on handshake packets (must match on both ends) |
+| `ContentPaddingAddition` | random range, e.g. `3-74` | Random padding per data packet. The kernel caps it at the largest packet already seen on the path, so it can't exceed the MTU |
+| `DisableCookies` | `on` | No cookie-reply packets under load, which removes one fixed-size fingerprint |
+| `RekeyAfterTime` / `RejectAfterTime` | ~`95-140` / ~`170-205` s | Jitters the stock 120/180 s rekey schedule; rekey always happens before reject |
+| `RekeyTimeout` / `KeepaliveTimeout` | ~`4-7` / ~`8-15` s | Jitters the stock 5/10 s timers |
+| `MaxHandshakeAttempts` | ~`15-23` | Jitters the stock 18 attempts |
+
+wg-easy has no new-client defaults for the per-client 3.x options. Clients you create later get the server-copied values (HeaderProtectionKey, RandomTrailers, S, H) but not the per-client ones. Run `--sync-clients` after adding clients to fill those in too.
 
 Clients need an app that supports AmneziaWG 2.x (S3/S4, H ranges, I1–I5), such as current AmneziaWG or Amnezia VPN. The stock WireGuard app can't connect.
 
