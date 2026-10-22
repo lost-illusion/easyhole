@@ -7,6 +7,7 @@
 #
 # Usage: sudo ./awg-params.sh [--awg3] [--force]
 #        sudo ./awg-params.sh --sync-clients
+#        sudo ./awg-params.sh --remove-client-defaults
 #   --awg3          also fill the AmneziaWG 3.x options: HeaderProtectionKey,
 #                   ContentPaddingAddition, RandomTrailers, DisableCookies and the
 #                   timing ranges. 2.x clients can't connect to a 3.x server.
@@ -14,8 +15,17 @@
 #   --force         re-roll parameters that are already filled. S1-S4/H1-H4 must match
 #                   on both ends, so every existing client has to re-download its config.
 #   --sync-clients  copy the server's client-side values (Jc/Jmin/Jmax, I1-I5 and the
-#                   3.x per-client options) to every existing client. wg-easy has no
-#                   new-client defaults for the 3.x options, so run this after adding clients.
+#                   3.x per-client options) to every existing client.
+#   --remove-client-defaults
+#                   remove the new-client defaults workaround (see below) once wg-easy
+#                   has its own defaults for the 3.x per-client options.
+#
+# TEMPORARY WORKAROUND: wg-easy has no new-client defaults for the 3.x per-client
+# options, so every mode except --remove-client-defaults also installs
+# awg-client-defaults.mjs plus a wg0 PostUp hook that runs it. It creates an SQLite
+# trigger that fills those options into each client created in the admin UI.
+# Remove it with --remove-client-defaults once wg-easy supports them; this script
+# prints a notice when it detects that.
 #
 # Run after the first `docker compose up -d` (the DB must exist). Stops wg-easy
 # while writing, backs up the DB next to it, then starts wg-easy again.
@@ -32,7 +42,8 @@ for arg in "$@"; do
         --awg3) AWG3=1 ;;
         --force) FORCE=1 ;;
         --sync-clients) MODE=sync ;;
-        *) echo "Usage: $0 [--awg3] [--force] | --sync-clients"; exit 1 ;;
+        --remove-client-defaults) MODE=remove ;;
+        *) echo "Usage: $0 [--awg3] [--force] | --sync-clients | --remove-client-defaults"; exit 1 ;;
     esac
 done
 
@@ -54,6 +65,13 @@ BACKUP="$DB.bak-$(date +%Y%m%d-%H%M%S)"
 cp -a "$DB" "$BACKUP"
 echo "Backup: $BACKUP"
 
+# ./config is mounted at /etc/wireguard, where the PostUp hook runs the script.
+if [ "$MODE" = remove ]; then
+    rm -f ./config/awg-client-defaults.mjs
+else
+    cp -f ./awg-client-defaults.mjs ./config/awg-client-defaults.mjs
+fi
+
 python3 -I - "$DB" "$MODE" "$AWG3" "$FORCE" <<'PY'
 import base64
 import secrets
@@ -72,7 +90,40 @@ CLIENT_COLS = ["j_c", "j_min", "j_max", "i1", "i2", "i3", "i4", "i5",
 # Columns wg-easy keeps new-client defaults for (user_configs_table.default_*).
 DEFAULT_COLS = ["j_c", "j_min", "j_max", "i1", "i2", "i3", "i4", "i5"]
 
+# Workaround for missing wg-easy new-client defaults (see awg-client-defaults.mjs).
+TRIGGER = "easyhole_awg_client_defaults"
+HOOK = "node --no-warnings /etc/wireguard/awg-client-defaults.mjs || true;"
+
 db = sqlite3.connect(db_path)
+
+
+def post_up():
+    row = db.execute("SELECT post_up FROM hooks_table WHERE id='wg0'").fetchone()
+    if row is None:
+        sys.exit("ERROR: no hooks for wg0 in DB")
+    return row[0]
+
+
+def install_hook():
+    hooks = post_up()
+    if HOOK in hooks:
+        return
+    hooks = hooks.rstrip()
+    if hooks and not hooks.endswith(";"):
+        hooks += ";"
+    db.execute("UPDATE hooks_table SET post_up=? WHERE id='wg0'", (f"{hooks} {HOOK}".strip(),))
+    print("Added wg0 PostUp hook: new clients get the 3.x per-client values")
+
+
+def remove_hook():
+    hooks = post_up().replace(HOOK, "").strip()
+    db.execute("UPDATE hooks_table SET post_up=? WHERE id='wg0'", (hooks,))
+    db.execute(f"DROP TRIGGER IF EXISTS {TRIGGER}")
+
+
+def upstream_has_defaults():
+    cols = [r[1] for r in db.execute("PRAGMA table_info(user_configs_table)")]
+    return "default_content_padding_addition" in cols
 
 
 def sync_clients():
@@ -146,6 +197,21 @@ def gen_3x():
     }
 
 
+if mode == "remove":
+    with db:
+        remove_hook()
+    print(f"Removed the wg0 PostUp hook and {TRIGGER}.")
+    if not upstream_has_defaults():
+        print("NOTE: this wg-easy version has no 3.x new-client defaults: run --sync-clients after adding clients.")
+    sys.exit(0)
+
+if upstream_has_defaults():
+    print("NOTICE: wg-easy now has its own new-client defaults for the 3.x options.")
+    print("        Remove the workaround: sudo ./awg-params.sh --remove-client-defaults")
+else:
+    with db:
+        install_hook()
+
 if mode == "sync":
     with db:
         n = sync_clients()
@@ -190,3 +256,21 @@ echo "Starting wg-easy..."
 docker compose start wg-easy
 sleep 5
 docker compose exec wg-easy awg show wg0 | grep -vE 'key:'
+
+# The PostUp hook creates the trigger when wg0 comes up; confirm it did.
+if [ "$MODE" != remove ] && grep -q "awg-client-defaults.mjs" ./config/wg0.conf 2>/dev/null; then
+    for _ in $(seq 10); do
+        if python3 -I - "$DB" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+sql = "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='easyhole_awg_client_defaults'"
+sys.exit(0 if db.execute(sql).fetchone() else 1)
+PY
+        then
+            echo "OK: new clients get the 3.x per-client values automatically"
+            exit 0
+        fi
+        sleep 2
+    done
+    echo "WARNING: client defaults trigger not found. Check: docker compose logs wg-easy | grep easyhole"
+fi

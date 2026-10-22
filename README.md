@@ -76,6 +76,7 @@ easyhole/
 ├── build.sh                # Clones + builds wg-easy from a pinned tag
 ├── install-awg.sh          # Builds the AmneziaWG kernel module via DKMS
 ├── awg-params.sh           # Fills all AmneziaWG obfuscation params in the wg-easy DB
+├── awg-client-defaults.mjs # TEMPORARY: fills 3.x per-client options into new clients
 ├── ufw.sh                  # Host firewall + WireGuard port rule
 ├── wg-easy/                # Cloned by build.sh on first run
 └── (created at runtime)
@@ -162,8 +163,9 @@ On first boot wg-easy only randomizes H1–H4, as single values. Jc/Jmin/Jmax an
 ```bash
 sudo ./awg-params.sh                 # AmneziaWG 2.x: Jc/Jmin/Jmax, S1–S4, H1–H4 ranges, I1–I5
 sudo ./awg-params.sh --awg3          # + all 3.x options (3.x clients only); keeps existing 2.x values
-sudo ./awg-params.sh --sync-clients  # after adding clients: give them the server's per-client values
+sudo ./awg-params.sh --sync-clients  # copy the server's per-client values to all existing clients
 sudo ./awg-params.sh --awg3 --force  # re-roll everything; every client must re-download its config
+sudo ./awg-params.sh --remove-client-defaults  # drop the new-client workaround (see below)
 ```
 
 The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface, the new-client defaults and all existing clients, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path.
@@ -180,7 +182,13 @@ The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the
 | `RekeyTimeout` / `KeepaliveTimeout` | ~`4-7` / ~`8-15` s | Jitters the stock 5/10 s timers |
 | `MaxHandshakeAttempts` | ~`15-23` | Jitters the stock 18 attempts |
 
-wg-easy has no new-client defaults for the per-client 3.x options. Clients you create later get the server-copied values (HeaderProtectionKey, RandomTrailers, S, H) but not the per-client ones. Run `--sync-clients` after adding clients to fill those in too.
+#### New clients and the 3.x per-client options (temporary workaround)
+
+wg-easy has no new-client defaults for the per-client 3.x options (`ContentPaddingAddition`, the timing ranges, `DisableCookies`). Without help, a client created in the admin UI gets them empty and its config leaves them out. It still connects, but with less obfuscation.
+
+`awg-params.sh` works around this: it copies `awg-client-defaults.mjs` into `./config/` and appends a wg0 **PostUp** hook (visible under the interface's Hooks in the admin UI) that runs it. The script creates an SQLite trigger that fills those options from the server interface into every newly created client. The hook re-creates the trigger on every start, so it survives wg-easy updates that rebuild the clients table. Clients created in the UI get complete configs, no extra step needed.
+
+> **Remove this hack once wg-easy supports it.** When wg-easy gains its own new-client defaults for these options (a `default_content_padding_addition` column in `user_configs_table`), `awg-params.sh` prints a notice. Then run `sudo ./awg-params.sh --remove-client-defaults`. It drops the trigger, the hook and the copied script, and the wg-easy UI settings take over.
 
 Clients need an app that supports AmneziaWG 2.x (S3/S4, H ranges, I1–I5), such as current AmneziaWG or Amnezia VPN. The stock WireGuard app can't connect.
 
