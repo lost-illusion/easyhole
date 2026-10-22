@@ -6,11 +6,11 @@
 # Designed to be safe to invoke from build.sh on every run.
 #
 # Env:
-#   AWG_KERNEL_REF        Git ref to build (default: master)
+#   AWG_KERNEL_REF        Git ref to build (default: v3.1.20260906)
 #   AWG_FORCE_REINSTALL   Force rebuild even if module is already loaded
 set -euo pipefail
 
-REF="${AWG_KERNEL_REF:-master}"
+REF="${AWG_KERNEL_REF:-v3.1.20260906}"
 REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
 DKMS_NAME="amneziawg"
 DKMS_VER="1.0.0"
@@ -63,8 +63,17 @@ if [ -z "$TARGET_SHA" ]; then
 fi
 SHORT_TARGET="${TARGET_SHA:0:7}"
 
+ppa_installed() {
+    dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null | grep -q 'install ok installed'
+}
+
 # 4. Idempotence check
 if modinfo amneziawg >/dev/null 2>&1 && [ -z "${AWG_FORCE_REINSTALL:-}" ]; then
+    if ppa_installed; then
+        log "WARNING: amneziawg comes from the PPA package amneziawg-dkms, not a source build"
+        log "         to replace it with $REF ($SHORT_TARGET): sudo AWG_FORCE_REINSTALL=true ./install-awg.sh"
+        exit 0
+    fi
     INSTALLED_SHA=""
     [ -r "$STATE_FILE" ] && INSTALLED_SHA="$(cat "$STATE_FILE")"
 
@@ -103,6 +112,18 @@ git -C "$SRC_DIR" checkout --quiet "$REF"
 RESOLVED_SHA="$(git -C "$SRC_DIR" rev-parse HEAD)"
 SHORT_RESOLVED="${RESOLVED_SHA:0:7}"
 
+# The PPA package registers the same DKMS name/version and owns
+# /usr/src/amneziawg-1.0.0; left installed, its next apt upgrade would
+# overwrite our source tree and DKMS would rebuild the PPA module.
+if ppa_installed; then
+    log "removing PPA package amneziawg-dkms (keeping amneziawg-tools)"
+    if dpkg-query -W -f='${Status}' amneziawg-tools 2>/dev/null | grep -q 'install ok installed'; then
+        apt-mark manual amneziawg-tools >/dev/null
+    fi
+    modprobe -r amneziawg 2>/dev/null || true
+    DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq amneziawg amneziawg-dkms
+fi
+
 # Remove any prior DKMS install of the same module/version
 if dkms status "$DKMS_NAME/$DKMS_VER" 2>/dev/null | grep -q .; then
     log "removing previous DKMS install of $DKMS_NAME/$DKMS_VER"
@@ -114,7 +135,7 @@ make -C "$SRC_DIR/src" dkms-install
 
 # `dkms add` is a no-op if already added by make dkms-install
 dkms add -m "$DKMS_NAME" -v "$DKMS_VER" 2>/dev/null || true
-log "building DKMS module"
+log "building DKMS module for $(uname -r)"
 dkms build -m "$DKMS_NAME" -v "$DKMS_VER"
 log "installing DKMS module"
 # --no-initrd: amneziawg is a runtime networking module, not needed in initramfs.
@@ -122,8 +143,32 @@ log "installing DKMS module"
 # update-initramfs/mkinitrd is broken for unrelated reasons.
 dkms install --no-initrd -m "$DKMS_NAME" -v "$DKMS_VER"
 
+# Also build for kernels that are installed but not booted yet (e.g. after an
+# unattended upgrade awaiting reboot). DKMS AUTOINSTALL only covers kernels
+# installed *after* the module; without this the next reboot comes up with no
+# amneziawg and wg-easy falls back to plain WireGuard. Best-effort: an old
+# kernel failing to build must not abort the install for the running one.
+for kdir in /lib/modules/*/; do
+    kver="$(basename "$kdir")"
+    [ "$kver" = "$(uname -r)" ] && continue
+    [ -e "$kdir/build" ] || continue
+    log "building DKMS module for installed kernel $kver"
+    if ! { dkms build -m "$DKMS_NAME" -v "$DKMS_VER" -k "$kver" \
+           && dkms install --no-initrd -m "$DKMS_NAME" -v "$DKMS_VER" -k "$kver"; }; then
+        log "WARNING: DKMS build failed for $kver (headers incomplete?); amneziawg will be missing if you boot it"
+    fi
+done
+
 log "loading module"
 modprobe amneziawg
+
+# modprobe is a no-op when an older build is still loaded (e.g. wg-easy holds
+# wg0), so the new module only takes effect after a reload.
+if [ -r /sys/module/amneziawg/srcversion ] \
+   && [ "$(cat /sys/module/amneziawg/srcversion)" != "$(modinfo -F srcversion amneziawg)" ]; then
+    log "WARNING: an older amneziawg build is still loaded; to switch to $SHORT_RESOLVED:"
+    log "         docker compose stop wg-easy && modprobe -r amneziawg && modprobe amneziawg && docker compose start wg-easy"
+fi
 
 # Verify module is registered with the kernel
 if ! modinfo amneziawg >/dev/null 2>&1; then

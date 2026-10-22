@@ -23,7 +23,10 @@ nano .env                    # set INIT_HOST, INIT_PASSWORD, WEBPASSWORD, DNS_SE
 # 3. Launch
 docker compose up -d
 
-# 4. Reach the admin UI from your laptop (UI is bound to 127.0.0.1 on the host)
+# 4. Fill all AmneziaWG obfuscation params (once, before creating clients)
+sudo ./awg-params.sh
+
+# 5. Reach the admin UI from your laptop (UI is bound to 127.0.0.1 on the host)
 ssh -L 51821:127.0.0.1:51821 user@your-host
 # then open http://localhost:51821
 ```
@@ -71,6 +74,9 @@ easyhole/
 ├── docker-compose.yml      # Service definitions
 ├── .env / .env.example     # Configuration
 ├── build.sh                # Clones + builds wg-easy from a pinned tag
+├── install-awg.sh          # Builds the AmneziaWG kernel module via DKMS
+├── awg-params.sh           # Fills all AmneziaWG obfuscation params in the wg-easy DB
+├── ufw.sh                  # Host firewall + WireGuard port rule
 ├── wg-easy/                # Cloned by build.sh on first run
 └── (created at runtime)
     ├── dns-server/         # Technitium data
@@ -93,6 +99,8 @@ The `.env` file is split into runtime values (always honored) and **first-boot i
 | `SERVERPORT`            | Public UDP port for WireGuard (host **and** in-container listen) | runtime     |
 | `WGUI_PORT`             | Admin web UI port (bound to `127.0.0.1` on host)                 | runtime     |
 | `EXPERIMENTAL_AWG`      | Enable AmneziaWG support (auto-detects kernel module)            | runtime     |
+| `OVERRIDE_AUTO_AWG`     | Force `awg` / `wg` instead of auto-detect (example: `awg`)        | runtime     |
+| `DISABLE_IPV6`          | Disable IPv6 in wg-easy (default `true`: the bridge is IPv4-only) | runtime     |
 | `INIT_ENABLED`          | Run unattended setup on first boot                               | first-boot  |
 | `INIT_USERNAME`         | Admin username                                                   | first-boot  |
 | `INIT_PASSWORD`         | Admin password — **change before first boot**                    | first-boot  |
@@ -114,6 +122,8 @@ The `.env` file is split into runtime values (always honored) and **first-boot i
 
 The default `WG_EASY_TAG` is an upstream master commit because AmneziaWG 3.1 (`HeaderProtectionKey`, `ContentPaddingAddition`, `RandomTrailers`, `DisableCookies`, timing ranges) is not in a wg-easy release yet. wg-easy v15.1.0 and older ship no AmneziaWG tools, so `EXPERIMENTAL_AWG` has no effect there. The 3.x parameters are optional: leave them unset to keep AmneziaWG 2.x clients working.
 
+The stack pins wg-easy to `1c8188d4a6a453580d767fb0be918843d648141d` (2026-10-06), the AmneziaWG kernel module to `v3.1.20260906`, Pi-hole to `2026.10.0`, and Technitium to `15.6.2`. The Compose healthcheck accepts both AmneziaWG and standard WireGuard interfaces.
+
 Install methods:
 
 - **`./install-awg.sh`** (recommended, included in this repo) — builds from upstream source via DKMS. Auto-runs as part of `./build.sh` and is safe to invoke repeatedly.
@@ -127,11 +137,14 @@ Install methods:
 | Not Debian/Ubuntu                               | One-line skip notice, exit 0                                |
 | LXC container or no `/lib/modules/$(uname -r)`  | Skip with explanation (kernel modules can't be loaded here) |
 | Module already loaded, ref matches `AWG_KERNEL_REF` | "OK: amneziawg already current ($SHA)"                  |
-| Module loaded but upstream `master` moved       | WARNING with the upgrade command                            |
+| Module loaded but `AWG_KERNEL_REF` resolves to a different SHA | WARNING with the upgrade command             |
+| Module comes from the PPA (`amneziawg-dkms`)    | WARNING: rerun with `AWG_FORCE_REINSTALL=true` to replace it |
 | Not running as root                             | Prints `sudo` instruction, exit 0                           |
-| Root + all gates pass                           | `apt-get install` deps, `git clone`, `make dkms-install`, `dkms add/build/install`, `modprobe`, persist via `/etc/modules-load.d/amneziawg.conf` |
+| Root + all gates pass                           | `apt-get install` deps, removes PPA `amneziawg-dkms` if present (keeps `amneziawg-tools`), `git clone`, `make dkms-install`, `dkms add/build/install` for the running kernel **and every other installed kernel with headers**, `modprobe`, persist via `/etc/modules-load.d/amneziawg.conf` |
 
 State file `/var/lib/easyhole/awg-installed-ref` records the SHA of the last successful install.
+
+If an older build is still loaded (wg-easy holds `wg0`), the script says so. The new module only takes effect after `docker compose stop wg-easy && modprobe -r amneziawg && modprobe amneziawg && docker compose start wg-easy`.
 
 #### Manual invocation
 
@@ -140,7 +153,21 @@ sudo ./install-awg.sh                              # first install
 sudo AWG_FORCE_REINSTALL=true ./install-awg.sh     # force rebuild (e.g., to pick up upstream master)
 ```
 
-DKMS handles kernel upgrades automatically — when you boot a new kernel, the module is rebuilt against its headers.
+DKMS rebuilds the module for kernels installed *after* it. Kernels that were already installed but not booted yet (a pending reboot after `apt full-upgrade`) are covered by `install-awg.sh` itself. Set `OVERRIDE_AUTO_AWG=awg` so a missing module fails wg-easy's startup visibly, instead of silently falling back to plain WireGuard that AmneziaWG clients can't reach.
+
+### AmneziaWG obfuscation parameters (`awg-params.sh`)
+
+On first boot wg-easy only randomizes H1–H4, as single values. Jc/Jmin/Jmax and S1/S2 stay at upstream defaults, and S3/S4, I1–I5 and the H ranges are left empty. Run once after the first `docker compose up -d`, before creating clients:
+
+```bash
+sudo ./awg-params.sh            # AmneziaWG 2.x: Jc/Jmin/Jmax, S1–S4, H1–H4 ranges, I1–I5
+sudo ./awg-params.sh --awg3     # also HeaderProtectionKey (AmneziaWG 3.x clients only)
+sudo ./awg-params.sh --force    # re-roll; every existing client must re-download its config
+```
+
+The script stops wg-easy, backs up `config/wg-easy.db`, writes the values to the server interface and the new-client defaults, then starts wg-easy again. I1 mimics a QUIC Initial packet. S4 is kept ≤ 16 so the default 1420 MTU still fits a 1500-byte path. The other AmneziaWG 3.x options (ContentPaddingAddition, RandomTrailers, DisableCookies, timing ranges) stay unset; set them in the UI if you need them.
+
+Clients need an app that supports AmneziaWG 2.x (S3/S4, H ranges, I1–I5), such as current AmneziaWG or Amnezia VPN. The stock WireGuard app can't connect.
 
 ### Why the variable rename (v15)
 
@@ -175,7 +202,8 @@ $EDITOR .env                 # set INIT_HOST, all *PASSWORD* fields
 
 ./build.sh                   # clones + builds wg-easy from $WG_EASY_TAG
 docker compose up -d
-docker compose ps            # all 3 services should be 'running'
+docker compose ps            # all 3 services should be 'running' (wg-easy 'healthy' after ~1 min)
+sudo ./awg-params.sh         # fill all AmneziaWG obfuscation params
 ```
 
 > **Always run `./build.sh` before `docker compose up -d`.** The script clones `wg-easy/` (which compose uses as a build context), runs `git fetch`, and warns if your pinned `WG_EASY_TAG` is behind the latest upstream stable release. Running `docker compose up -d --build` directly will fail on first install (no `wg-easy/` directory) and skips the upstream-version check.
@@ -185,7 +213,7 @@ docker compose ps            # all 3 services should be 'running'
 1. SSH-tunnel to the admin UI: `ssh -L 51821:127.0.0.1:51821 user@your-host`
 2. Open <http://localhost:51821>, log in with `INIT_USERNAME` / `INIT_PASSWORD`
 3. Create a client → download `.conf` or scan QR code
-4. Import into the WireGuard app and connect
+4. Import into the AmneziaWG app (or the WireGuard app if `EXPERIMENTAL_AWG=false`) and connect
 
 ---
 
@@ -298,6 +326,10 @@ If `Endpoint = host:51820` appears even though you set `SERVERPORT=51999`, the S
 
 The UI is bound to `127.0.0.1` on the host. From outside, use SSH port-forwarding or change the bind in `docker-compose.yml` (e.g. to a LAN IP). Do **not** bind to `0.0.0.0` unless you've put TLS + auth in front of it.
 
+### AmneziaWG clients can't connect after a reboot
+
+Check `lsmod | grep amneziawg`. If the module is missing, the booted kernel has no build: run `sudo AWG_FORCE_REINSTALL=true ./install-awg.sh`, then `docker compose restart wg-easy`. With `OVERRIDE_AUTO_AWG=awg`, wg-easy fails at startup in this state. Without it, wg-easy silently serves plain WireGuard.
+
 ### Pi-hole shows no queries
 
 - Confirm the client is actually using the VPN (`curl ifconfig.me`)
@@ -312,7 +344,7 @@ The UI is bound to `127.0.0.1` on the host. From outside, use SSH port-forwardin
 
 ## Notes
 
-- IPv6 enabled in the WireGuard interface by default
+- IPv6 is disabled in wg-easy by default (`DISABLE_IPV6=true`) because `private_network` is IPv4-only: client IPv6 would have no way out. To enable it, add an IPv6 subnet with `enable_ipv6: true` to the network first.
 - Technitium recursion is allowed only from `127.0.0.1`, `192.168.1.0/24`, and `10.0.0.0/8` — adjust in `docker-compose.yml` if your LAN differs
 - `INSECURE=true` is set on wg-easy because the UI is bound to `127.0.0.1`; if you expose it publicly, set `INSECURE=false` and front it with TLS
 
